@@ -139,7 +139,7 @@ export const createIntegrationTests = (
     await pool.end();
   });
 
-  test('produces error if multiple statements are passed as the query input', async (t) => {
+  test('produces error if multiple statements are passed as the query input (without parameters)', async (t) => {
     const pool = await createPool(t.context.dsn, {
       driverFactory,
     });
@@ -153,21 +153,42 @@ export const createIntegrationTests = (
     t.true(error instanceof InvalidInputError);
   });
 
+  // The difference between this test and the previous one is that this one is expected to fail before the query is executed.
+  // In case of pg driver, that is because of the { queryMode: 'extended' } setting.
+  test('produces error if multiple statements are passed as the query input (with parameters)', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+    });
+
+    const error = await t.throwsAsync(
+      pool.query(sql.unsafe`
+        SELECT ${1}; SELECT ${2};
+      `),
+    );
+
+    // The actual error is going to be driver specific, e.g.: 'cannot insert multiple commands into a prepared statement'.
+    // However, Slonik will require compatible drivers to throw InputSyntaxError.
+    t.true(error instanceof InputSyntaxError);
+  });
+
   test('NotNullIntegrityConstraintViolationError identifies the table and column', async (t) => {
     const pool = await createPool(t.context.dsn, {
       driverFactory,
     });
 
-    const error: NotNullIntegrityConstraintViolationError | undefined =
-      await t.throwsAsync(
-        pool.any(sql.unsafe`
-      INSERT INTO person (name) VALUES (null)
-    `),
-      );
+    const error: Error | undefined = await t.throwsAsync(
+      pool.any(sql.unsafe`
+        INSERT INTO person (name) VALUES (null)
+      `),
+    );
 
     t.true(error instanceof NotNullIntegrityConstraintViolationError);
-    t.is(error?.table, 'person');
-    t.is(error?.column, 'name');
+
+    const notNullIntegrityConstraintViolationError =
+      error as NotNullIntegrityConstraintViolationError;
+
+    t.is(notNullIntegrityConstraintViolationError?.table, 'person');
+    t.is(notNullIntegrityConstraintViolationError?.column, 'name');
   });
 
   test('properly handles terminated connections', async (t) => {
@@ -194,13 +215,15 @@ export const createIntegrationTests = (
       driverFactory,
     });
 
-    const error: InputSyntaxError | undefined = await t.throwsAsync(
+    const error: Error | undefined = await t.throwsAsync(
       pool.any(sql.unsafe`SELECT WHERE`),
     );
 
     t.true(error instanceof InputSyntaxError);
 
-    t.is(error?.sql, 'SELECT WHERE');
+    const inputSyntaxError = error as InputSyntaxError;
+
+    t.is(inputSyntaxError?.sql, 'SELECT WHERE');
 
     await pool.end();
   });

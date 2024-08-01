@@ -1,5 +1,9 @@
 # slonik-interceptor-query-cache
 
+## 45.6.0
+
+## 45.5.0
+
 ## 45.4.1
 
 ## 45.4.0
