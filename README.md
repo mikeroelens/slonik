@@ -28,14 +28,14 @@ Note: Using this project does not require TypeScript. It is a regular ES6 module
 
 ## Features
 
-* [Runtime validation](#runtime-validation)
+* [Runtime validation](#runtime-validation).
 * [Assertions and type safety](#repeating-code-patterns-and-type-safety).
 * [Safe connection handling](#protecting-against-unsafe-connection-handling).
 * [Safe transaction handling](#protecting-against-unsafe-transaction-handling).
 * [Safe value interpolation](#protecting-against-unsafe-value-interpolation).
 * [Transaction nesting](#transaction-nesting).
-* [Transaction retrying](#transaction-retrying)
-* [Query retrying](#query-retrying)
+* [Transaction retrying](#transaction-retrying).
+* [Query retrying](#query-retrying).
 * Detailed [logging](#debugging).
 * [Asynchronous stack trace resolution](#capture-stack-trace).
 * [Middlewares](#interceptors).
@@ -65,6 +65,7 @@ Note: Using this project does not require TypeScript. It is a regular ES6 module
         * [API](#api)
         * [Default configuration](#default-configuration)
         * [Checking out a client from the connection pool](#checking-out-a-client-from-the-connection-pool)
+        * [Events](#events)
     * [How are they different?](#how-are-they-different)
         * [`pg` vs `slonik`](#pg-vs-slonik)
         * [`pg-promise` vs `slonik`](#pg-promise-vs-slonik)
@@ -80,14 +81,14 @@ Note: Using this project does not require TypeScript. It is a regular ES6 module
         * [Building Utility Statements](#building-utility-statements)
         * [Inserting vector data](#inserting-vector-data)
     * [Runtime validation](#runtime-validation)
-        * [Motivation](#runtime-validation-motivation)
-        * [Result parser interceptor](#runtime-validation-result-parser-interceptor)
-        * [Example use of `sql.type`](#runtime-validation-example-use-of-sql-type)
-        * [Performance penalty](#runtime-validation-performance-penalty)
-        * [Unknown keys](#runtime-validation-unknown-keys)
-        * [Handling schema validation errors](#runtime-validation-handling-schema-validation-errors)
-        * [Inferring types](#runtime-validation-inferring-types)
-        * [Transforming results](#runtime-validation-transforming-results)
+        * [Motivation](#motivation)
+        * [Result parser interceptor](#result-parser-interceptor)
+        * [Example use of `sql.type`](#example-use-of-sqltype)
+        * [Performance penalty](#performance-penalty)
+        * [Unknown keys](#unknown-keys)
+        * [Handling schema validation errors](#handling-schema-validation-errors)
+        * [Inferring types](#inferring-types)
+        * [Transforming results](#transforming-results)
     * [`sql` tag](#sql-tag)
         * [Type aliases](#type-aliases)
         * [Typing `sql` tag](#typing-sql-tag)
@@ -96,19 +97,19 @@ Note: Using this project does not require TypeScript. It is a regular ES6 module
         * [Manually constructing the query](#manually-constructing-the-query)
         * [Nesting `sql`](#nesting-sql)
     * [Query building](#query-building)
-        * [`sql.array`](#sql-array)
-        * [`sql.binary`](#sql-binary)
-        * [`sql.date`](#sql-date)
-        * [`sql.fragment`](#sql-fragment)
-        * [`sql.identifier`](#sql-identifier)
-        * [`sql.interval`](#sql-interval)
-        * [`sql.join`](#sql-join)
-        * [`sql.json`](#sql-json)
-        * [`sql.jsonb`](#sql-jsonb)
-        * [`sql.literalValue`](#sql-literalvalue)
-        * [`sql.timestamp`](#sql-timestamp)
-        * [`sql.unnest`](#sql-unnest)
-        * [`sql.unsafe`](#sql-unsafe)
+        * [`sql.array`](#sqlarray)
+        * [`sql.binary`](#sqlbinary)
+        * [`sql.date`](#sqldate)
+        * [`sql.fragment`](#sqlfragment)
+        * [`sql.identifier`](#sqlidentifier)
+        * [`sql.interval`](#sqlinterval)
+        * [`sql.join`](#sqljoin)
+        * [`sql.json`](#sqljson)
+        * [`sql.jsonb`](#sqljsonb)
+        * [`sql.literalValue`](#sqlliteralvalue)
+        * [`sql.timestamp`](#sqltimestamp)
+        * [`sql.unnest`](#sqlunnest)
+        * [`sql.unsafe`](#sqlunsafe)
     * [Query methods](#query-methods)
         * [`any`](#any)
         * [`anyFirst`](#anyfirst)
@@ -123,8 +124,8 @@ Note: Using this project does not require TypeScript. It is a regular ES6 module
         * [`stream`](#stream)
         * [`transaction`](#transaction)
     * [Utilities](#utilities)
-        * [`parseDsn`](#utilities-parsedsn)
-        * [`stringifyDsn`](#utilities-stringifydsn)
+        * [`parseDsn`](#parsedsn)
+        * [`stringifyDsn`](#stringifydsn)
     * [Error handling](#error-handling)
         * [Original `node-postgres` error](#original-node-postgres-error)
         * [Handling `BackendTerminatedError`](#handling-backendterminatederror)
@@ -296,10 +297,14 @@ The default behaviour is to execute `DISCARD ALL` command. This behaviour can be
 ```ts
 import {
   createPool,
-  sql
+  sql,
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
 const pool = createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
   resetConnection: async (connection) => {
     await connection.query('DISCARD ALL');
   }
@@ -312,8 +317,12 @@ const pool = createPool('postgres://', {
 > import {
 >   createPool,
 > } from 'slonik';
+> import {
+>   createPgDriverFactory,
+> } from '@slonik/pg-driver';
 >
 > const pool = createPool('postgres://', {
+>   driverFactory: createPgDriverFactory(),
 >   resetConnection: async () => {}
 > });
 
@@ -480,8 +489,13 @@ Use `createPool` to create a connection pool, e.g.
 import {
   createPool,
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
-const pool = await createPool('postgres://');
+const pool = await createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
+});
 ```
 
 > **Note:** If you are new to Slonik, then you should read [Integrating Slonik with Express.js](https://dev.to/gajus/integrating-slonik-with-expressjs-33kn).
@@ -517,8 +531,13 @@ import {
   createPool,
   sql,
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
-const pool = await createPool('postgres://');
+const pool = await createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
+});
 
 const main = async () => {
   await pool.query(sql.typeAlias('id')`
@@ -542,8 +561,13 @@ import {
   createPool,
   sql,
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
-const pool = await createPool('postgres://');
+const pool = await createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
+});
 
 const main = async () => {
   pool.state();
@@ -621,7 +645,8 @@ createPool(
  * @property idleInTransactionSessionTimeout Timeout (in milliseconds) after which idle clients are closed. Use 'DISABLE_TIMEOUT' constant to disable the timeout. (Default: 60000)
  * @property idleTimeout Timeout (in milliseconds) after which idle clients are closed. Use 'DISABLE_TIMEOUT' constant to disable the timeout. (Default: 5000)
  * @property interceptors An array of [Slonik interceptors](https://github.com/gajus/slonik#interceptors).
- * @property maximumPoolSize Do not allow more than this many connections. Use 'DISABLE_TIMEOUT' constant to disable the timeout. (Default: 10)
+ * @property maximumPoolSize Do not allow more than this many connections. (Default: 10)
+ * @property minimumPoolSize Ensure that at least this many connections are available in the pool. (Default: 0)
  * @property queryRetryLimit Number of times a query failing with Transaction Rollback class error, that doesn't belong to a transaction, is retried. (Default: 5)
  * @property ssl [tls.connect options](https://nodejs.org/api/tls.html#tlsconnectoptions-callback)
  * @property statementTimeout Timeout (in milliseconds) after which database is instructed to abort the query. Use 'DISABLE_TIMEOUT' constant to disable the timeout. (Default: 60000)
@@ -638,6 +663,7 @@ type ClientConfiguration = {
   idleTimeout?: number | 'DISABLE_TIMEOUT',
   interceptors?: Interceptor[],
   maximumPoolSize?: number,
+  maximumPoolSize?: number,
   queryRetryLimit?: number,
   ssl?: Parameters<tls.connect>[0],
   statementTimeout?: number | 'DISABLE_TIMEOUT',
@@ -652,8 +678,13 @@ Example:
 import {
   createPool
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
-const pool = await createPool('postgres://');
+const pool = await createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
+});
 
 await pool.query(sql.typeAlias('id')`SELECT 1 AS id`);
 ```
@@ -693,8 +724,12 @@ You can create default type parser collection using `createTypeParserPreset`, e.
 import {
   createTypeParserPreset
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
 createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
   typeParsers: [
     ...createTypeParserPreset()
   ]
@@ -726,8 +761,13 @@ Slonik only allows to check out a connection for the duration of the promise rou
 import {
   createPool,
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
-const pool = await createPool('postgres://localhost');
+const pool = await createPool('postgres://localhost', {
+  driverFactory: createPgDriverFactory(),
+});
 
 const result = await pool.connect(async (connection) => {
   await connection.query(sql.typeAlias('id')`SELECT 1 AS id`);
@@ -744,6 +784,30 @@ result;
 Connection is released back to the pool after the promise produced by the function supplied to `connect()` method is either resolved or rejected.
 
 Read: [Protecting against unsafe connection handling](#protecting-against-unsafe-connection-handling).
+
+### Events
+
+The `DatabasePool` extends `DatabasePoolEventEmitter` and exposes the following events:
+
+- `error`: `(error: SlonikError) => void` – emitted for all errors that happen within the pool.
+
+```ts
+import {
+  createPool,
+  type DatabasePoolEventEmitter,
+} from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
+
+const pool = await createPool('postgres://localhost', {
+  driverFactory: createPgDriverFactory(),
+});
+
+pool.on('error', (error) => {
+  console.error(error);
+});
+```
 
 ## How are they different?
 
@@ -784,18 +848,6 @@ Work on `pg-promise` began [Wed Mar 4 02:00:34 2015](https://github.com/vitaly-t
 ### <code>postgres</code> vs <code>slonik</code>
 
 [`postgres`](https://github.com/porsager/postgres) recently gained in popularity due to its performance benefits when compared to `pg`. In terms of API, it has a pretty bare-bones API that heavily relies on using ES6 tagged templates and abstracts away many concepts of connection pool handling. While `postgres` API might be preferred by some, projects that already use `pg` may have difficulty migrating.
-
-However, by using [postgres-bridge](https://github.com/gajus/postgres-bridge) (`postgres`/`pg` compatibility layer), you can benefit from `postgres` performance improvements while still using Slonik API:
-
-```ts
-import postgres from 'postgres';
-import { createPostgresBridge } from 'postgres-bridge';
-import { createPool } from 'slonik';
-const PostgresBridge = createPostgresBridge(postgres);
-const pool = createPool('postgres://', {
-  PgPool: PostgresBridge,
-});
-```
 
 ## Type parsers
 
@@ -872,10 +924,14 @@ Interceptors are configured using [client configuration](#api), e.g.
 import {
   createPool
 } from 'slonik';
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
 const interceptors = [];
 
 const connection = await createPool('postgres://', {
+  driverFactory: createPgDriverFactory(),
   interceptors
 });
 ```
@@ -1092,6 +1148,7 @@ Note: This particular implementation does not handle [`SELECT INTO`](https://www
 
 ```ts
 const readOnlyPool = await createPool('postgres://read-only');
+
 const pool = await createPool('postgres://main', {
   interceptors: [
     {
@@ -1234,8 +1291,12 @@ To use it, simply add it as a middleware:
 
 ```ts
 import { createPool } from "slonik";
+import {
+  createPgDriverFactory,
+} from '@slonik/pg-driver';
 
 createPool("postgresql://", {
+  driverFactory: createPgDriverFactory(),
   interceptors: [createResultParserInterceptor()],
 });
 ```
@@ -1726,7 +1787,12 @@ sql.typeAlias('id')`
 `
 ```
 
-The only difference between queries and fragments is that fragments are untyped and they cannot be used as inputs to query methods (use `sql.type` instead).
+#### Fragments vs Queries
+
+There are two primary differences:
+
+* Fragments are untyped and they cannot be used as inputs to query methods (use `sql.type` instead).
+* Queries are expected to be valid SQL if executed (e.g. `SELECT * FROM foo`); fragments are expected to be valid _fragments_ of SQL (e.g. `WHERE bar = 1`).
 
 > [!WARNING]
 > Due to the way that Slonik internally represents SQL fragments, your query must not contain `$slonik_` literals.
@@ -2834,5 +2900,5 @@ Running Slonik tests requires having a local PostgreSQL instance.
 The easiest way to setup a temporary instance for testing is using Docker, e.g.
 
 ```bash
-docker run --name slonik-test --rm -it -e POSTGRES_HOST_AUTH_METHOD=trust -p 5432:5432 postgres -N 1000
+docker run --name slonik-test --rm -it -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres -N 1000
 ```

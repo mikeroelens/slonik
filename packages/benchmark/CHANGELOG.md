@@ -1,5 +1,35 @@
 # @slonik/benchmark
 
+## 46.2.0
+
+### Patch Changes
+
+- Updated dependencies [[`c8f9741`](https://github.com/gajus/slonik/commit/c8f9741855d3a564b1709fb539cbf0a09610056e)]:
+  - slonik@46.2.0
+
+## 46.1.0
+
+### Patch Changes
+
+- Updated dependencies [[`97924d6`](https://github.com/gajus/slonik/commit/97924d663c8f948c70dc3f3a3248000e298627d7)]:
+  - slonik@46.1.0
+
+## 46.0.1
+
+### Patch Changes
+
+- [`a478df5`](https://github.com/gajus/slonik/commit/a478df56482e9f9ee6adc6489d101259c91fa89d) Thanks [@gajus](https://github.com/gajus)! - update lock file
+
+- Updated dependencies [[`a478df5`](https://github.com/gajus/slonik/commit/a478df56482e9f9ee6adc6489d101259c91fa89d)]:
+  - slonik@46.0.1
+
+## 46.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`c415b16`](https://github.com/gajus/slonik/commit/c415b16616871073fa0aa11a4965e2ba86db60a0), [`48263cd`](https://github.com/gajus/slonik/commit/48263cd4845aa89539bd7004ae195d1a968bbeb1)]:
+  - slonik@46.0.0
+
 ## 45.6.0
 
 ### Patch Changes

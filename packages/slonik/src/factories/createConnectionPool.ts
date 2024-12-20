@@ -1,4 +1,5 @@
 import { Logger } from '../Logger';
+import { type DatabasePoolEventEmitter } from '../types';
 import {
   type Driver,
   type DriverClientEventEmitter,
@@ -15,9 +16,17 @@ const logger = Logger.child({
   namespace: 'createConnectionPool',
 });
 
+export type ConnectionPool = {
+  acquire: () => Promise<ConnectionPoolClient>;
+  end: () => Promise<void>;
+  id: () => string;
+  state: () => ConnectionPoolState;
+};
+
 export type ConnectionPoolClient = {
   acquire: () => void;
   destroy: () => Promise<void>;
+  events: DatabasePoolEventEmitter;
   id: () => string;
   off: DriverClientEventEmitter['off'];
   on: DriverClientEventEmitter['on'];
@@ -31,12 +40,6 @@ export type ConnectionPoolClient = {
   ) => DriverStream<DriverStreamResult>;
 };
 
-type WaitingClient = {
-  deferred: DeferredPromise<ConnectionPoolClient>;
-};
-
-type ConnectionPoolStateName = 'ACTIVE' | 'ENDING' | 'ENDED';
-
 /**
  * @property {number} acquiredConnections - The number of connections that are currently acquired.
  */
@@ -49,20 +52,23 @@ type ConnectionPoolState = {
   waitingClients: number;
 };
 
-export type ConnectionPool = {
-  acquire: () => Promise<ConnectionPoolClient>;
-  end: () => Promise<void>;
-  id: () => string;
-  state: () => ConnectionPoolState;
+type ConnectionPoolStateName = 'ACTIVE' | 'ENDED' | 'ENDING';
+
+type WaitingClient = {
+  deferred: DeferredPromise<ConnectionPoolClient>;
 };
 
 export const createConnectionPool = ({
   driver,
-  poolSize = 1,
+  events,
+  maximumPoolSize,
+  minimumPoolSize,
 }: {
   driver: Driver;
-  idleTimeout?: number;
-  poolSize?: number;
+  events: DatabasePoolEventEmitter;
+  idleTimeout: number;
+  maximumPoolSize: number;
+  minimumPoolSize: number;
 }): ConnectionPool => {
   // See test "waits for all connections to be established before attempting to terminate the pool"
   // for explanation of why `pendingConnections` is needed.
@@ -77,7 +83,7 @@ export const createConnectionPool = ({
   let isEnding = false;
   let isEnded = false;
 
-  let poolEndPromise: Promise<void> | null = null;
+  let poolEndPromise: null | Promise<void> = null;
 
   const endPool = async () => {
     try {
@@ -108,7 +114,11 @@ export const createConnectionPool = ({
     // e.g. "waits for all connections to be established before attempting to terminate the pool" test
     await delay(0);
 
-    await Promise.all(connections.map((connection) => connection.destroy()));
+    // Make a copy of `connections` array as items are removed from it during the map iteration.
+    // If `connections` array is used directly, the loop will skip some items.
+    await Promise.all(
+      [...connections].map((connection) => connection.destroy()),
+    );
   };
 
   const acquire = async () => {
@@ -120,22 +130,24 @@ export const createConnectionPool = ({
       throw new Error('Connection pool has ended.');
     }
 
-    const idleConnection = connections.find(
-      (connection) => connection.state() === 'IDLE',
-    );
-
-    if (idleConnection) {
-      idleConnection.acquire();
-
-      return idleConnection;
-    }
-
-    if (pendingConnections.length + connections.length < poolSize) {
-      const pendingConnection = driver.createClient();
+    const addConnection = async () => {
+      const pendingConnection = driver
+        .createClient()
+        // eslint-disable-next-line promise/prefer-await-to-then
+        .then((resolvedConnection) => {
+          return {
+            ...resolvedConnection,
+            events,
+          };
+        });
 
       pendingConnections.push(pendingConnection);
 
-      const connection = await pendingConnection;
+      const connection = await pendingConnection.catch((error) => {
+        pendingConnections.pop();
+
+        throw error;
+      });
 
       const onRelease = () => {
         const waitingClient = waitingClients.shift();
@@ -163,6 +175,12 @@ export const createConnectionPool = ({
 
         const waitingClient = waitingClients.shift();
 
+        if (!isEnding && !isEnded && connections.length < minimumPoolSize) {
+          addConnection();
+
+          return;
+        }
+
         if (!waitingClient) {
           return;
         }
@@ -176,8 +194,6 @@ export const createConnectionPool = ({
 
       connection.on('destroy', onDestroy);
 
-      connection.acquire();
-
       connections.push(connection);
 
       pendingConnections.splice(
@@ -186,38 +202,57 @@ export const createConnectionPool = ({
       );
 
       return connection;
-    } else {
-      const deferred = defer<ConnectionPoolClient>();
+    };
 
-      waitingClients.push({
-        deferred,
-      });
+    const idleConnection = connections.find(
+      (connection) => connection.state() === 'IDLE',
+    );
 
-      const queuedAt = process.hrtime.bigint();
+    if (idleConnection) {
+      idleConnection.acquire();
 
-      logger.warn(
+      return idleConnection;
+    }
+
+    if (pendingConnections.length + connections.length < maximumPoolSize) {
+      const newConnection = await addConnection();
+
+      newConnection.acquire();
+
+      return newConnection;
+    }
+
+    const deferred = defer<ConnectionPoolClient>();
+
+    waitingClients.push({
+      deferred,
+    });
+
+    const queuedAt = process.hrtime.bigint();
+
+    logger.warn(
+      {
+        connections: connections.length,
+        maximumPoolSize,
+        minimumPoolSize,
+        pendingConnections: pendingConnections.length,
+        waitingClients: waitingClients.length,
+      },
+      `connection pool full; client has been queued`,
+    );
+
+    // eslint-disable-next-line promise/prefer-await-to-then
+    return deferred.promise.then((connection) => {
+      logger.debug(
         {
-          connections: connections.length,
-          pendingConnections: pendingConnections.length,
-          poolSize,
-          waitingClients: waitingClients.length,
+          connectionId: connection.id(),
+          duration: Number(process.hrtime.bigint() - queuedAt) / 1e6,
         },
-        `connection pool full; client has been queued`,
+        'connection has been acquired from the queue',
       );
 
-      // eslint-disable-next-line promise/prefer-await-to-then
-      return deferred.promise.then((connection) => {
-        logger.debug(
-          {
-            connectionId: connection.id(),
-            duration: Number(process.hrtime.bigint() - queuedAt) / 1e6,
-          },
-          'connection has been acquired from the queue',
-        );
-
-        return connection;
-      });
-    }
+      return connection;
+    });
   };
 
   return {

@@ -1,5 +1,65 @@
 # slonik
 
+## 46.2.0
+
+### Minor Changes
+
+- [`c8f9741`](https://github.com/gajus/slonik/commit/c8f9741855d3a564b1709fb539cbf0a09610056e) Thanks [@gajus](https://github.com/gajus)! - give pool instance EventEmitter prototype
+
+### Patch Changes
+
+- Updated dependencies [[`6aa21ad`](https://github.com/gajus/slonik/commit/6aa21ad31300ba904d26853e0c78b70f21393bf7)]:
+  - @slonik/pg-driver@46.2.0
+  - @slonik/driver@46.2.0
+  - @slonik/errors@46.2.0
+  - @slonik/sql-tag@46.2.0
+  - @slonik/utilities@46.2.0
+
+## 46.1.0
+
+### Minor Changes
+
+- [#639](https://github.com/gajus/slonik/pull/639) [`97924d6`](https://github.com/gajus/slonik/commit/97924d663c8f948c70dc3f3a3248000e298627d7) Thanks [@gajus](https://github.com/gajus)! - add minimumPoolSize option
+
+### Patch Changes
+
+- Updated dependencies [[`97924d6`](https://github.com/gajus/slonik/commit/97924d663c8f948c70dc3f3a3248000e298627d7)]:
+  - @slonik/driver@46.1.0
+  - @slonik/errors@46.1.0
+  - @slonik/pg-driver@46.1.0
+  - @slonik/sql-tag@46.1.0
+  - @slonik/utilities@46.1.0
+
+## 46.0.1
+
+### Patch Changes
+
+- [`a478df5`](https://github.com/gajus/slonik/commit/a478df56482e9f9ee6adc6489d101259c91fa89d) Thanks [@gajus](https://github.com/gajus)! - update lock file
+
+- Updated dependencies [[`a478df5`](https://github.com/gajus/slonik/commit/a478df56482e9f9ee6adc6489d101259c91fa89d)]:
+  - @slonik/driver@46.0.1
+  - @slonik/errors@46.0.1
+  - @slonik/pg-driver@46.0.1
+  - @slonik/sql-tag@46.0.1
+  - @slonik/utilities@46.0.1
+
+## 46.0.0
+
+### Major Changes
+
+- [#633](https://github.com/gajus/slonik/pull/633) [`c415b16`](https://github.com/gajus/slonik/commit/c415b16616871073fa0aa11a4965e2ba86db60a0) Thanks [@mikeroelens](https://github.com/mikeroelens)! - fix: close all connections in pool.end(). Previously a subset idleConnections would hang until idleTimeout was reached
+
+### Patch Changes
+
+- [#632](https://github.com/gajus/slonik/pull/632) [`48263cd`](https://github.com/gajus/slonik/commit/48263cd4845aa89539bd7004ae195d1a968bbeb1) Thanks [@yamnigh](https://github.com/yamnigh)! - Fix: release pending pool connections on error
+
+- Updated dependencies []:
+  - @slonik/driver@46.0.0
+  - @slonik/errors@46.0.0
+  - @slonik/pg-driver@46.0.0
+  - @slonik/sql-tag@46.0.0
+  - @slonik/utilities@46.0.0
+
 ## 45.6.0
 
 ### Minor Changes

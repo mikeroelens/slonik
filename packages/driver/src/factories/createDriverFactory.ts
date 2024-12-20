@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/consistent-type-definitions */
+
 import { Logger } from '../Logger';
 import { type Field } from '@slonik/types';
 import { generateUid } from '@slonik/utilities';
@@ -8,53 +10,25 @@ import { type ConnectionOptions as TlsConnectionOptions } from 'node:tls';
 import { serializeError } from 'serialize-error';
 import { type StrictEventEmitter } from 'strict-event-emitter-types';
 
-type StreamDataEvent<T> = { data: T; fields: readonly Field[] };
-
-// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
-export interface DriverStream<T> extends Readable {
-  // eslint-disable-next-line @typescript-eslint/method-signature-style
-  on(event: 'data', listener: (chunk: StreamDataEvent<T>) => void): this;
-  // eslint-disable-next-line @typescript-eslint/method-signature-style
-  on(event: string | symbol, listener: (...args: any[]) => void): this;
-
-  [Symbol.asyncIterator]: () => AsyncIterableIterator<StreamDataEvent<T>>;
-}
-
-type BasicConnection = {
-  readonly query: (query: string) => Promise<void>;
+export type Driver = {
+  createClient: () => Promise<DriverClient>;
 };
 
-/**
- * @property name Value of "pg_type"."typname" (e.g. "int8", "timestamp", "timestamptz").
- */
-export type DriverTypeParser<T = unknown> = {
-  readonly name: string;
-  readonly parse: (value: string) => T;
+export type DriverClient = {
+  acquire: () => void;
+  destroy: () => Promise<void>;
+  id: () => string;
+  off: DriverClientEventEmitter['off'];
+  on: DriverClientEventEmitter['on'];
+  query: (query: string, values?: unknown[]) => Promise<DriverQueryResult>;
+  release: () => Promise<void>;
+  removeListener: DriverClientEventEmitter['removeListener'];
+  state: () => DriverClientState;
+  stream: (
+    query: string,
+    values?: unknown[],
+  ) => DriverStream<DriverStreamResult>;
 };
-
-export type DriverConfiguration = {
-  readonly connectionTimeout: number | 'DISABLE_TIMEOUT';
-  readonly connectionUri: string;
-  readonly gracefulTerminationTimeout?: number;
-  readonly idleInTransactionSessionTimeout: number | 'DISABLE_TIMEOUT';
-  readonly idleTimeout?: number | 'DISABLE_TIMEOUT';
-  readonly maximumPoolSize?: number;
-  readonly resetConnection?: (connection: BasicConnection) => Promise<void>;
-  readonly ssl?: TlsConnectionOptions;
-  readonly statementTimeout: number | 'DISABLE_TIMEOUT';
-  readonly typeParsers: readonly DriverTypeParser[];
-};
-
-export type DriverNotice = {
-  message: string;
-};
-
-export type DriverEventEmitter = StrictEventEmitter<
-  EventEmitter,
-  {
-    error: (error: Error) => void;
-  }
->;
 
 export type DriverClientEventEmitter = StrictEventEmitter<
   EventEmitter,
@@ -74,25 +48,28 @@ export type DriverClientState =
   | 'PENDING_DESTROY'
   | 'PENDING_RELEASE';
 
-export type DriverClient = {
-  acquire: () => void;
-  destroy: () => Promise<void>;
-  id: () => string;
-  off: DriverClientEventEmitter['off'];
-  on: DriverClientEventEmitter['on'];
-  query: (query: string, values?: unknown[]) => Promise<DriverQueryResult>;
-  release: () => Promise<void>;
-  removeListener: DriverClientEventEmitter['removeListener'];
-  state: () => DriverClientState;
-  stream: (
-    query: string,
-    values?: unknown[],
-  ) => DriverStream<DriverStreamResult>;
+export type DriverCommand = 'COPY' | 'DELETE' | 'INSERT' | 'SELECT' | 'UPDATE';
+
+export type DriverConfiguration = {
+  readonly connectionTimeout: 'DISABLE_TIMEOUT' | number;
+  readonly connectionUri: string;
+  readonly gracefulTerminationTimeout?: number;
+  readonly idleInTransactionSessionTimeout: 'DISABLE_TIMEOUT' | number;
+  readonly idleTimeout?: 'DISABLE_TIMEOUT' | number;
+  readonly maximumPoolSize?: number;
+  readonly minimumPoolSize?: number;
+  readonly resetConnection?: (connection: BasicConnection) => Promise<void>;
+  readonly ssl?: TlsConnectionOptions;
+  readonly statementTimeout: 'DISABLE_TIMEOUT' | number;
+  readonly typeParsers: readonly DriverTypeParser[];
 };
 
-export type Driver = {
-  createClient: () => Promise<DriverClient>;
-};
+export type DriverEventEmitter = StrictEventEmitter<
+  EventEmitter,
+  {
+    error: (error: Error) => void;
+  }
+>;
 
 export type DriverFactory = ({
   driverConfiguration,
@@ -100,28 +77,52 @@ export type DriverFactory = ({
   driverConfiguration: DriverConfiguration;
 }) => Promise<Driver>;
 
-type DriverField = {
-  dataTypeId: number;
-  name: string;
+export type DriverNotice = {
+  message: string;
 };
-
-export type DriverCommand = 'COPY' | 'DELETE' | 'INSERT' | 'SELECT' | 'UPDATE';
 
 export type DriverQueryResult = {
   readonly command: DriverCommand;
   readonly fields: DriverField[];
-  readonly rowCount: number | null;
+  readonly rowCount: null | number;
   readonly rows: Array<Record<string, unknown>>;
 };
+
+// @ts-expect-error - TODO figure out how to fix this
+export interface DriverStream<T> extends Readable {
+  [Symbol.asyncIterator]: () => AsyncIterableIterator<StreamDataEvent<T>>;
+  // eslint-disable-next-line @typescript-eslint/method-signature-style
+  on(event: 'data', listener: (chunk: StreamDataEvent<T>) => void): this;
+
+  // eslint-disable-next-line @typescript-eslint/method-signature-style
+  on(event: string | symbol, listener: (...args: any[]) => void): this;
+}
 
 export type DriverStreamResult = {
   readonly fields: DriverField[];
   readonly row: Record<string, unknown>;
 };
 
+/**
+ * @property name Value of "pg_type"."typname" (e.g. "int8", "timestamp", "timestamptz").
+ */
+export type DriverTypeParser<T = unknown> = {
+  readonly name: string;
+  readonly parse: (value: string) => T;
+};
+
+type BasicConnection = {
+  readonly query: (query: string) => Promise<void>;
+};
+
+type DriverField = {
+  dataTypeId: number;
+  name: string;
+};
+
 type DriverSetup = ({
-  driverEventEmitter,
   driverConfiguration,
+  driverEventEmitter,
 }: {
   driverConfiguration: DriverConfiguration;
   driverEventEmitter: DriverEventEmitter;
@@ -149,6 +150,8 @@ type InternalPoolClientFactory = {
     clientEventEmitter: DriverClientEventEmitter;
   }) => Promise<InternalPoolClient>;
 };
+
+type StreamDataEvent<T> = { data: T; fields: readonly Field[] };
 
 export const createDriverFactory = (setup: DriverSetup): DriverFactory => {
   return async ({ driverConfiguration }): Promise<Driver> => {
@@ -188,7 +191,7 @@ export const createDriverFactory = (setup: DriverSetup): DriverFactory => {
 
         clientEventEmitter.on('error', onError);
 
-        const { query, stream, connect, end } = await createPoolClient({
+        const { connect, end, query, stream } = await createPoolClient({
           clientEventEmitter,
         });
 
@@ -196,9 +199,9 @@ export const createDriverFactory = (setup: DriverSetup): DriverFactory => {
         let isDestroyed = false;
         let idleTimeout: NodeJS.Timeout | null = null;
 
-        let activeQueryPromise: Promise<DriverQueryResult> | null = null;
-        let destroyPromise: Promise<void> | null = null;
-        let releasePromise: Promise<void> | null = null;
+        let activeQueryPromise: null | Promise<DriverQueryResult> = null;
+        let destroyPromise: null | Promise<void> = null;
+        let releasePromise: null | Promise<void> = null;
 
         const id = generateUid();
 
@@ -310,7 +313,6 @@ export const createDriverFactory = (setup: DriverSetup): DriverFactory => {
             }, driverConfiguration.idleTimeout).unref();
           }
 
-          // eslint-disable-next-line require-atomic-updates
           isAcquired = false;
 
           releasePromise = null;
@@ -396,7 +398,6 @@ export const createDriverFactory = (setup: DriverSetup): DriverFactory => {
 
               return result;
             } finally {
-              // eslint-disable-next-line require-atomic-updates
               activeQueryPromise = null;
             }
           },

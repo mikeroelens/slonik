@@ -1,7 +1,9 @@
 /* eslint-disable id-length */
+/* cspell:ignore tstzrange */
 
 import {
   BackendTerminatedError,
+  CheckExclusionConstraintViolationError,
   CheckIntegrityConstraintViolationError,
   createNumericTypeParser,
   createPool,
@@ -12,6 +14,7 @@ import {
   InputSyntaxError,
   InvalidInputError,
   NotNullIntegrityConstraintViolationError,
+  parseDsn,
   sql,
   StatementCancelledError,
   StatementTimeoutError,
@@ -22,8 +25,8 @@ import {
 } from '..';
 import { type TestContextType } from './createTestRunner';
 import { type DriverFactory } from '@slonik/driver';
-// eslint-disable-next-line ava/use-test
 import { type TestFn } from 'ava';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as sinon from 'sinon';
 import { z } from 'zod';
@@ -226,6 +229,21 @@ export const createIntegrationTests = (
     t.is(inputSyntaxError?.sql, 'SELECT WHERE');
 
     await pool.end();
+  });
+
+  test('emits thrown errors', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+    });
+
+    const onError = sinon.spy();
+
+    pool.on('error', onError);
+
+    await t.throwsAsync(pool.any(sql.unsafe`SELECT WHERE`));
+
+    t.is(onError.callCount, 1);
+    t.true(onError.firstCall.args[0] instanceof InputSyntaxError);
   });
 
   test('retrieves correct infinity values (with timezone)', async (t) => {
@@ -926,7 +944,7 @@ export const createIntegrationTests = (
 
     const pool = await createPool(t.context.dsn, {
       driverFactory,
-      idleTimeout: 500,
+      idleTimeout: 'DISABLE_TIMEOUT',
       maximumPoolSize: 5,
     });
 
@@ -967,8 +985,6 @@ export const createIntegrationTests = (
     });
 
     await pool.end();
-
-    await delay(600);
 
     t.deepEqual(pool.state(), {
       acquiredConnections: 0,
@@ -1509,6 +1525,39 @@ export const createIntegrationTests = (
     t.true(error instanceof UniqueIntegrityConstraintViolationError);
   });
 
+  test('throws CheckExclusionConstraintViolationError if exclusion constraint is violated', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+    });
+
+    // Set up the test table with an exclusion constraint on overlapping ranges
+    await pool.query(sql.unsafe`
+      CREATE TABLE exclusion_constraint_test (
+        id SERIAL PRIMARY KEY,
+        range tstzrange,
+        EXCLUDE USING gist (range WITH &&)
+      );
+    `);
+
+    // Insert a range that should be allowed
+    await pool.query(sql.unsafe`
+      INSERT INTO exclusion_constraint_test (range) 
+      VALUES (tstzrange('2024-01-01 00:00:00+00', '2024-01-31 23:59:59+00'));
+    `);
+
+    // Attempt to insert an overlapping range, expecting a CheckExclusionConstraintViolationError
+    const error = await t.throwsAsync(
+      pool.query(sql.unsafe`
+        INSERT INTO exclusion_constraint_test (range) 
+        VALUES (tstzrange('2024-01-15 00:00:00+00', '2024-02-15 23:59:59+00'));
+      `),
+    );
+
+    t.true(error instanceof CheckExclusionConstraintViolationError);
+
+    await pool.end();
+  });
+
   test('throws ForeignKeyIntegrityConstraintViolationError if foreign key constraint is violated', async (t) => {
     const pool = await createPool(t.context.dsn, {
       driverFactory,
@@ -1944,6 +1993,272 @@ export const createIntegrationTests = (
     );
   });
 
+  test('removes connections from the pool after the idle timeout', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+      idleTimeout: 100,
+    });
+
+    t.deepEqual(
+      pool.state(),
+      {
+        acquiredConnections: 0,
+        idleConnections: 0,
+        pendingDestroyConnections: 0,
+        pendingReleaseConnections: 0,
+        state: 'ACTIVE',
+        waitingClients: 0,
+      },
+      'initial state',
+    );
+
+    await pool.query(sql.unsafe`
+      SELECT 1
+    `);
+
+    t.deepEqual(
+      pool.state(),
+      {
+        acquiredConnections: 0,
+        idleConnections: 1,
+        pendingDestroyConnections: 0,
+        pendingReleaseConnections: 0,
+        state: 'ACTIVE',
+        waitingClients: 0,
+      },
+      'shows idle clients',
+    );
+
+    await delay(100);
+
+    t.deepEqual(
+      pool.state(),
+      {
+        acquiredConnections: 0,
+        idleConnections: 0,
+        pendingDestroyConnections: 0,
+        pendingReleaseConnections: 0,
+        state: 'ACTIVE',
+        waitingClients: 0,
+      },
+      'shows no idle clients',
+    );
+  });
+
+  test('removes connections from the pool after backend termination (connection terminated itself)', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+      idleTimeout: 5_000,
+      maximumPoolSize: 1,
+    });
+
+    const firstConnectionPid = await pool.oneFirst(sql.unsafe`
+      SELECT pg_backend_pid();
+    `);
+
+    // Confirm that the same connection is re-used.
+    await t.is(
+      firstConnectionPid,
+      await pool.oneFirst(sql.unsafe`
+        SELECT pg_backend_pid();
+      `),
+    );
+
+    await t.throwsAsync(
+      pool.query(sql.unsafe`
+        SELECT pg_terminate_backend(${firstConnectionPid})
+      `),
+      {
+        instanceOf: BackendTerminatedError,
+      },
+    );
+
+    const nextConnectionPid = await pool.oneFirst(sql.unsafe`
+      SELECT pg_backend_pid();
+    `);
+
+    t.not(firstConnectionPid, nextConnectionPid);
+
+    await pool.end();
+  });
+
+  const terminateBackend = async (dsn: string, pid: number) => {
+    const pool = await createPool(dsn, {
+      driverFactory,
+      maximumPoolSize: 1,
+    });
+
+    await pool.query(sql.unsafe`
+      SELECT pg_terminate_backend(${pid})
+    `);
+
+    await pool.end();
+  };
+
+  test('removes connections from the pool after backend termination (connection terminated unexpectedly)', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+      idleTimeout: 5_000,
+      maximumPoolSize: 1,
+    });
+
+    const firstConnectionPid = await pool.oneFirst(sql.unsafe`
+      SELECT pg_backend_pid();
+    `);
+
+    // Confirm that the same connection is re-used.
+    await t.is(
+      firstConnectionPid,
+      await pool.oneFirst(sql.unsafe`
+        SELECT pg_backend_pid();
+      `),
+    );
+
+    // We are using a separate connection to terminate the backend
+    // to ensure that  connection-level errors are handled,
+    // as opposed to statement-level errors.
+    await terminateBackend(t.context.dsn, firstConnectionPid);
+
+    const nextConnectionPid = await pool.oneFirst(sql.unsafe`
+      SELECT pg_backend_pid();
+    `);
+
+    t.not(firstConnectionPid, nextConnectionPid);
+
+    await pool.end();
+  });
+
+  test('connections failing auth are not added to the connection pool', async (t) => {
+    const superPool = await createPool(t.context.dsn, {
+      driverFactory,
+      maximumPoolSize: 1,
+    });
+
+    const connection = parseDsn(t.context.dsn);
+
+    const testUser = `auth_change_test_${randomUUID().split('-')[0]}`;
+
+    await superPool.query(
+      sql.unsafe`
+        CREATE ROLE ${sql.identifier([testUser])}
+        WITH LOGIN SUPERUSER
+        PASSWORD 'auth_change_test'
+      `,
+    );
+
+    // Connect as the new role
+    const pool = await createPool(
+      `postgres://${testUser}:auth_change_test@${connection.host}:${connection.port}/${connection.databaseName}`,
+      {
+        driverFactory,
+        idleTimeout: 1_000,
+        maximumPoolSize: 1,
+      },
+    );
+
+    await pool.oneFirst(sql.unsafe`
+      SELECT pg_backend_pid();
+    `);
+
+    // Change the password
+    await superPool.query(
+      sql.unsafe`
+        ALTER ROLE ${sql.identifier([testUser])}
+        PASSWORD 'auth_change_test_changed'
+      `,
+    );
+
+    // Wait for the idle timeout to expire
+    await delay(1_000);
+
+    // Ensure that there are no longer active connections.
+    t.like(pool.state(), {
+      acquiredConnections: 0,
+      idleConnections: 0,
+      pendingDestroyConnections: 0,
+      pendingReleaseConnections: 0,
+      waitingClients: 0,
+    });
+
+    const error = await t.throwsAsync(
+      pool.oneFirst(sql.unsafe`
+        SELECT pg_backend_pid();
+      `),
+    );
+
+    // @ts-expect-error TODO
+    t.is(error.cause.code, '28P01');
+
+    // Ensure that the connection was not added to the pool.
+    t.like(pool.state(), {
+      acquiredConnections: 0,
+      idleConnections: 0,
+      pendingDestroyConnections: 0,
+      pendingReleaseConnections: 0,
+      waitingClients: 0,
+    });
+
+    await pool.end();
+
+    await superPool.end();
+  });
+
+  test('retains a minimum number of connections in the pool', async (t) => {
+    const pool = await createPool(t.context.dsn, {
+      driverFactory,
+      idleTimeout: 100,
+      minimumPoolSize: 1,
+    });
+
+    t.deepEqual(
+      pool.state(),
+      {
+        acquiredConnections: 0,
+        // TODO we might want to add an option to warm up the pool, in which case this value should be 1
+        idleConnections: 0,
+        pendingDestroyConnections: 0,
+        pendingReleaseConnections: 0,
+        state: 'ACTIVE',
+        waitingClients: 0,
+      },
+      'initial state',
+    );
+
+    await pool.query(sql.unsafe`
+      SELECT 1
+    `);
+
+    t.deepEqual(
+      pool.state(),
+      {
+        acquiredConnections: 0,
+        idleConnections: 1,
+        pendingDestroyConnections: 0,
+        pendingReleaseConnections: 0,
+        state: 'ACTIVE',
+        waitingClients: 0,
+      },
+      'shows idle clients',
+    );
+
+    await delay(150);
+
+    t.deepEqual(
+      pool.state(),
+      {
+        acquiredConnections: 0,
+        idleConnections: 1,
+        pendingDestroyConnections: 0,
+        pendingReleaseConnections: 0,
+        state: 'ACTIVE',
+        waitingClients: 0,
+      },
+      'shows idle clients because minimum pool size is 1',
+    );
+
+    await pool.end();
+  });
+
   test('retains explicit transaction beyond the idle timeout', async (t) => {
     const pool = await createPool(t.context.dsn, {
       driverFactory,
@@ -1988,8 +2303,8 @@ export const createIntegrationTests = (
   });
 
   type IsolationLevel =
-    | 'READ UNCOMMITTED'
     | 'READ COMMITTED'
+    | 'READ UNCOMMITTED'
     | 'REPEATABLE READ'
     | 'SERIALIZABLE';
 
@@ -2019,9 +2334,9 @@ export const createIntegrationTests = (
   };
 
   const testConcurrentTransactions = ({
-    isolationLevel,
     expectedResult1,
     expectedResult2,
+    isolationLevel,
   }: {
     expectedResult1: number;
     expectedResult2: number;
